@@ -1,0 +1,367 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>OpenSSH sshole 쉽게 보기</title>
+<meta name="description" content="OpenSSH *sshole(CVE-2026-123158)은 알파인처럼 musl을 쓰는 sshd에서 257바이트 넘는 비밀번호로 비밀번호 없는 계정에 로그인되는 버그다. 벨로키 도어락 비유, crypt 재현 결과, 내 서버 해당 여부 체크, 5단계 점검 순서를 정리했다.">
+<style>
+:root{--bg:#fbf7f0;--panel:#fff;--panel2:#f3ece0;--ink:#26221d;--muted:#6e665b;--line:#e2d8c8;--accent:#e2632b;--blue:#2f6fd6;--mint:#1f9e7a;--yellow:#f2b632;--red:#d6453d;--shadow:0 2px 0 #e2d8c8}
+@media (prefers-color-scheme:dark){:root:not([data-theme="light"]){--bg:#17140f;--panel:#211d17;--panel2:#2a251d;--ink:#f4ede2;--muted:#b7ab99;--line:#3d362b;--accent:#ff8a4c;--blue:#7fb0ff;--mint:#5ad6ad;--yellow:#ffd06a;--red:#ff7a70;--shadow:0 2px 0 #3d362b}}
+:root[data-theme="dark"]{--bg:#17140f;--panel:#211d17;--panel2:#2a251d;--ink:#f4ede2;--muted:#b7ab99;--line:#3d362b;--accent:#ff8a4c;--blue:#7fb0ff;--mint:#5ad6ad;--yellow:#ffd06a;--red:#ff7a70;--shadow:0 2px 0 #3d362b}
+*{box-sizing:border-box}
+body{margin:0;background:var(--bg);color:var(--ink);font:17px/1.8 system-ui,-apple-system,"Apple SD Gothic Neo","Malgun Gothic",sans-serif;word-break:keep-all;overflow-wrap:break-word}
+a{color:var(--blue)}
+code,pre{font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;font-size:.88em}
+code{background:var(--panel2);border:1px solid var(--line);border-radius:6px;padding:0 5px}
+pre{background:var(--panel2);border:1.5px solid var(--line);border-radius:12px;padding:12px 14px;overflow-x:auto;line-height:1.6;margin:10px 0}
+pre code{background:none;border:0;padding:0}
+.wrap{max-width:860px;margin:0 auto;padding:28px 16px 80px}
+header.hero{padding:28px 0 8px}
+.kicker{font-size:13px;letter-spacing:.08em;color:var(--accent);font-weight:700}
+h1{font-size:clamp(28px,6vw,42px);line-height:1.25;margin:8px 0 14px}
+h2{font-size:clamp(22px,4.6vw,28px);line-height:1.35;margin:56px 0 12px;padding-top:12px;border-top:2px dashed var(--line)}
+h3{font-size:19px;margin:28px 0 8px}
+.lead{font-size:18px}
+.meta{font-size:13px;color:var(--muted)}
+.card{background:var(--panel);border:1.5px solid var(--line);border-radius:16px;padding:18px;margin:18px 0;box-shadow:var(--shadow)}
+.answer{border-left:6px solid var(--accent)}
+.warn{border-left:6px solid var(--red)}
+.ok{border-left:6px solid var(--mint)}
+.toc{display:flex;flex-wrap:wrap;gap:8px;margin:18px 0 0;padding:0;list-style:none}
+.toc a{display:inline-block;font-size:14px;padding:5px 12px;border:1.5px solid var(--line);border-radius:999px;text-decoration:none;color:var(--ink);background:var(--panel)}
+.bubble{display:flex;gap:12px;align-items:flex-start;margin:20px 0}
+.bubble img{width:72px;height:auto;flex:none;background:#fff;border-radius:14px;border:1.5px solid var(--line);padding:4px}
+.bubble .say{background:var(--panel2);border:1.5px solid var(--line);border-radius:16px;padding:12px 16px}
+.bubble .who{font-size:12px;font-weight:700;color:var(--accent);display:block}
+figure{margin:22px 0}
+figure.illustration img{display:block;width:100%;height:auto;border:1.5px solid var(--line);border-radius:16px}
+figure svg{width:100%;height:auto;display:block;background:var(--panel);border:1.5px solid var(--line);border-radius:16px}
+figcaption{font-size:14px;color:var(--muted);margin-top:6px}
+.tbl{overflow-x:auto;-webkit-overflow-scrolling:touch;margin:16px 0}
+table{border-collapse:collapse;width:100%;min-width:520px;font-size:15px;background:var(--panel)}
+th,td{border:1px solid var(--line);padding:9px 10px;vertical-align:top;text-align:left}
+th{background:var(--panel2)}
+.note{font-size:14px;color:var(--muted)}
+.sim{background:var(--panel);border:1.5px solid var(--line);border-radius:16px;padding:16px;margin:18px 0}
+.sim .btns{display:flex;flex-wrap:wrap;gap:8px;margin-bottom:12px}
+.sim button{font:inherit;font-size:15px;padding:8px 14px;border-radius:10px;border:1.5px solid var(--line);background:var(--panel2);color:var(--ink);cursor:pointer}
+.sim button[aria-pressed="true"]{border-color:var(--accent);background:var(--accent);color:#fff}
+.lanes{display:grid;grid-template-columns:1fr 1fr;gap:10px}
+.lane{border:1.5px solid var(--line);border-radius:12px;padding:12px;background:var(--panel2)}
+.lane b{font-size:14px}
+.out{font-family:ui-monospace,Menlo,monospace;font-size:15px;margin:6px 0;word-break:break-all}
+.verdict{margin-top:8px;font-weight:700}
+.v-open{color:var(--red)}.v-shut{color:var(--mint)}
+.checks{display:grid;gap:8px;margin:6px 0 10px}
+.checks label{display:flex;gap:10px;align-items:flex-start;padding:10px 12px;border:1.5px solid var(--line);border-radius:12px;background:var(--panel2);cursor:pointer}
+.checks input{margin-top:6px;width:18px;height:18px;flex:none;accent-color:var(--accent)}
+.checks small{display:block;color:var(--muted);font-size:13px;line-height:1.5}
+.result{border-radius:12px;padding:12px 14px;font-weight:700;border:1.5px solid var(--line)}
+.result.danger{border-color:var(--red);color:var(--red)}
+.result.safe{border-color:var(--mint);color:var(--mint)}
+ol.steps li{margin:10px 0}
+.src li{font-size:14px;margin:4px 0}
+footer{margin-top:60px;font-size:13px;color:var(--muted);border-top:1px solid var(--line);padding-top:16px}
+@media (max-width:560px){.lanes{grid-template-columns:1fr}.bubble img{width:56px}body{font-size:16px}}
+</style>
+</head>
+<body>
+<div class="wrap">
+
+<header class="hero">
+  <div class="kicker">TECHTAEK · 벨로키의 서버 보안 점검</div>
+  <h1>OpenSSH sshole, 긴 비밀번호 하나로 문이 열린다고?</h1>
+  <div class="card answer">
+    <p class="lead" style="margin:0"><b>*sshole</b>(CVE-2026-123158, CVSS 8.1)은 <b>알파인 리눅스처럼 musl을 쓰고 PAM 없이 빌드된 sshd</b>에서, 비밀번호 칸이 <code>*</code>인 계정에 <b>257~1024바이트짜리 아무 비밀번호</b>를 넣으면 로그인되는 버그입니다.</p>
+    <p style="margin:10px 0 0">해당되면 <code>apk upgrade -U -a</code> 다음 <b>sshd 재시작</b>까지 하세요. 당장 못 하면 <code>PasswordAuthentication no</code>로 비밀번호 로그인을 끕니다. sshd를 돌리지 않는 알파인 도커 컨테이너는 해당되지 않습니다.</p>
+  </div>
+  <p class="meta">2026-11-06 작성 · 기준: 알파인 보안 공지(2026-11-05), OpenSSH 10.6p2 릴리스 노트, CVE 레코드 · 오늘 쓰는 비유는 아파트 공동현관 도어락 하나입니다.</p>
+  <ul class="toc">
+    <li><a href="#s1">1. 별표 한 글자</a></li>
+    <li><a href="#s2">2. 직접 재현</a></li>
+    <li><a href="#s3">3. 내 서버 해당?</a></li>
+    <li><a href="#docker">3-2. 도커 점검</a></li>
+    <li><a href="#s4">4. 5분 점검</a></li>
+    <li><a href="#s5">5. 재시작</a></li>
+    <li><a href="#s6">6. 흔적·한계</a></li>
+  </ul>
+</header>
+
+<figure class="illustration">
+  <img src="assets/open-door.webp" width="1200" height="800" alt="벨로키가 노트북 앞에서 뒤돌아보는데, 열린 방문 틈으로 검은 그림자들이 들어오고 있다" loading="eager">
+  <figcaption>잠갔다고 믿은 문이 열려 있던 상황. 이번 버그는 비밀번호를 "짧게"가 아니라 "길게" 넣어서 생깁니다.</figcaption>
+</figure>
+
+<h2 id="s1">1. 별표 한 글자가 문을 연 이유</h2>
+
+<div class="bubble">
+  <img src="assets/veloki-a.webp" width="72" height="75" alt="벨로키">
+  <div class="say"><span class="who">벨로키</span>보안 사고는 보통 비밀번호가 짧아서 나잖아. 근데 이번엔 <b>너무 길어서</b> 열렸대. 도어락으로 설명해 볼게.</div>
+</div>
+
+<div class="card">
+<b>잠깐, musl이 뭐야?</b>
+<p style="margin:6px 0 0">프로그램이 "비밀번호 해시 만들어 줘", "파일 열어 줘" 같은 기본 일을 맡기는 <b>C 표준 라이브러리</b>입니다. 리눅스 대부분(우분투·데비안 등)은 <b>glibc</b>를 쓰고, 알파인은 더 작고 가벼운 <b>musl</b>을 씁니다. 같은 함수 이름이라도 실패했을 때 돌려주는 값이 서로 다를 수 있고, 이번 버그가 바로 그 차이에서 나왔습니다.</p>
+</div>
+
+<p>관리사무소 장부에는 세대마다 비밀번호를 암호처럼 바꾼 값이 적혀 있습니다. "이 집은 비밀번호 없이 카드키만 써요"인 세대는 칸에 그냥 <code>*</code>를 적어 둡니다.</p>
+<p>도어락은 누가 누른 번호를 같은 방식으로 바꾼 뒤 장부 값과 비교합니다. 그런데 이 도어락은 <b>너무 긴 번호를 받으면 오류 표시로 <code>*</code>를 띄웁니다.</b> 비교 담당은 그 <code>*</code>를 장부의 <code>*</code>와 맞춰 보고 "같네요" 하며 문을 엽니다. 오류 표시와 "비밀번호 없음" 표시가 하필 같은 글자였던 겁니다.</p>
+
+<figure>
+<svg viewBox="0 0 760 300" role="img" aria-label="입력한 긴 비밀번호가 crypt에서 별표가 되고, 장부의 별표와 같아서 로그인이 통과되는 흐름도">
+  <rect width="760" height="300" fill="#fbf7f0"/>
+  <defs><marker id="ar" markerWidth="10" markerHeight="10" refX="8" refY="5" orient="auto"><path d="M0,0 L10,5 L0,10 z" fill="#6e665b"/></marker></defs>
+  <rect x="20" y="40" width="190" height="90" rx="14" fill="#f3ece0" stroke="#e2d8c8" stroke-width="2"/>
+  <text x="115" y="75" text-anchor="middle" font-size="16" font-weight="700" fill="#26221d">입력한 비밀번호</text>
+  <text x="115" y="104" text-anchor="middle" font-size="15" fill="#6e665b">AAAA…A (257바이트)</text>
+  <line x1="210" y1="85" x2="280" y2="85" stroke="#6e665b" stroke-width="2.5" marker-end="url(#ar)"/>
+  <rect x="285" y="40" width="190" height="90" rx="14" fill="#fff4ec" stroke="#e2632b" stroke-width="2"/>
+  <text x="380" y="75" text-anchor="middle" font-size="16" font-weight="700" fill="#26221d">musl crypt()</text>
+  <text x="380" y="104" text-anchor="middle" font-size="15" fill="#6e665b">256바이트 초과 → 오류</text>
+  <line x1="475" y1="85" x2="545" y2="85" stroke="#6e665b" stroke-width="2.5" marker-end="url(#ar)"/>
+  <rect x="550" y="40" width="190" height="90" rx="14" fill="#fff" stroke="#d6453d" stroke-width="2.5"/>
+  <text x="645" y="75" text-anchor="middle" font-size="16" font-weight="700" fill="#26221d">돌려준 값</text>
+  <text x="645" y="112" text-anchor="middle" font-size="34" font-weight="800" fill="#d6453d">*</text>
+  <rect x="550" y="180" width="190" height="90" rx="14" fill="#f3ece0" stroke="#e2d8c8" stroke-width="2"/>
+  <text x="645" y="212" text-anchor="middle" font-size="15" font-weight="700" fill="#26221d">/etc/shadow 장부</text>
+  <text x="645" y="254" text-anchor="middle" font-size="22" font-weight="800" fill="#26221d">user:*</text>
+  <line x1="645" y1="130" x2="645" y2="176" stroke="#d6453d" stroke-width="2.5" stroke-dasharray="6 5"/>
+  <text x="600" y="160" text-anchor="end" font-size="15" font-weight="700" fill="#d6453d">같다?!</text>
+  <rect x="285" y="180" width="190" height="90" rx="14" fill="#fff" stroke="#d6453d" stroke-width="2"/>
+  <text x="380" y="217" text-anchor="middle" font-size="17" font-weight="800" fill="#d6453d">로그인 통과</text>
+  <text x="380" y="246" text-anchor="middle" font-size="14" fill="#6e665b">비밀번호를 몰라도</text>
+  <line x1="550" y1="225" x2="480" y2="225" stroke="#d6453d" stroke-width="2.5" marker-end="url(#ar)"/>
+  <image href="assets/veloki-a.webp" x="40" y="170" width="105" height="110"/>
+  <text x="155" y="232" font-size="14" fill="#6e665b">"오류랑 '없음'이</text>
+  <text x="155" y="252" font-size="14" fill="#6e665b">같은 글자라니…"</text>
+</svg>
+<figcaption>실제 기술로 옮긴 흐름. 비밀번호 칸이 <code>*</code>라 소금(salt)이 없으면 sshd는 다른 계정의 <code>$5$</code>/<code>$6$</code> 소금을 빌려 쓰므로, 해시가 있는 계정이 하나는 있어야 이 경로가 열립니다.</figcaption>
+</figure>
+
+<div class="card">
+<b>비유가 실제와 다른 곳</b>
+<ul style="margin:6px 0 0">
+<li>"아무나 아무 집"이 아닙니다. 공격자는 <code>*</code>인 <b>계정 이름</b>을 알아야 하고, 그 계정이 로그인 가능해야 합니다.</li>
+<li>root는 알파인 기본 이미지에서 <code>root:*</code>지만, OpenSSH 기본값 <code>PermitRootLogin prohibit-password</code>가 root의 비밀번호 로그인을 막습니다.</li>
+<li>다만 <code>*</code>인 다른 계정이 <code>doas</code>로 root가 될 수 있다면 이 보호막은 소용없다고 알파인 공지가 경고합니다.</li>
+<li>CVE 레코드는 "256~1024자"로 적었지만, 공지와 아래 재현 모두 256바이트까지는 정상이고 257바이트부터 <code>*</code>가 나왔습니다.</li>
+</ul>
+</div>
+
+<h2 id="s2">2. 맥북 도커에서 직접 재현해 본 결과</h2>
+
+<p>공지만 읽으면 "진짜 별표 한 글자가 나와?" 싶어서, 같은 C 코드를 알파인과 데비안 컨테이너에서 돌려 봤습니다. 실행은 AI 에이전트가 제 맥북 Docker Desktop에서 했고, <b>sshd 공격은 하지 않고 <code>crypt()</code>가 돌려주는 값만</b> 확인했습니다. 조건은 같은 소금 <code>$6$saltsalt$</code>에 문자 <code>A</code>를 반복한 입력입니다.</p>
+
+<div class="sim" id="cryptSim">
+  <div class="btns" role="group" aria-label="입력 길이 선택">
+    <button type="button" data-len="8">8바이트</button>
+    <button type="button" data-len="256">256바이트</button>
+    <button type="button" data-len="257" aria-pressed="true">257바이트</button>
+    <button type="button" data-len="1024">1024바이트</button>
+  </div>
+  <div class="lanes">
+    <div class="lane"><b>alpine:3.24 (musl)</b><div class="out" id="outMusl"></div><div class="verdict" id="vMusl"></div></div>
+    <div class="lane"><b>debian:bookworm-slim (glibc + libxcrypt)</b><div class="out" id="outXc"></div><div class="verdict" id="vXc"></div></div>
+  </div>
+  <p class="note" style="margin:10px 0 0">판정은 "비밀번호 칸이 <code>*</code>인 계정과 비교하면 같은가"입니다. 출력값은 2026-11-06 실측 결과를 그대로 넣었고, 이 네 길이 외의 값은 지어내지 않았습니다.</p>
+</div>
+
+<div class="bubble">
+  <img src="assets/veloki-a.webp" width="72" height="75" alt="벨로키">
+  <div class="say"><span class="who">벨로키</span>이 버그를 증명하는 데 필요한 게 거창한 해킹 도구가 아니라 <code>A</code>를 257번 누르는 거였어. 보안 연구가 가끔은 키보드 내구성 테스트 같아.</div>
+</div>
+
+<p>재미있는 건 데비안 쪽입니다. 데비안의 <code>crypt()</code>를 제공하는 libxcrypt도 1024바이트는 거절했지만, 실패 표시가 <code>*0</code>이었습니다. 둘 다 "실패하면 특별한 문자열을 돌려준다"는 같은 방식인데, <code>*0</code>은 <code>*</code>와 같지 않아서 비교에서 걸립니다. <b>글자 하나 차이로 사고가 나고 안 나고가 갈린 셈</b>입니다.</p>
+<p class="note">에이전트가 받은 <code>alpine:3.24</code> 이미지는 이미 3.24.4, <code>openssh-server 10.3_p1-r2</code>(고정 버전)였습니다. 새로 받은 이미지는 고쳐져 있어도, 예전에 받아 돌리고 있는 서버는 그대로입니다.</p>
+
+<h2 id="s3">3. 내 서버가 해당되는지 체크해 보기</h2>
+
+<p>알파인 공지 기준으로 아래 네 가지가 <b>모두</b> 맞아야 위험합니다. 하나라도 아니면 이 버그로는 들어올 수 없습니다. 내 서버에 맞는 칸을 체크해 보세요.</p>
+
+<div class="sim" id="condSim">
+  <div class="checks">
+    <label><input type="checkbox" id="c1"><span><b>이 기계(또는 컨테이너) 안에서 sshd가 돌고 있다</b><small><code>pgrep -a sshd</code> · 도커는 <code>docker exec &lt;컨테이너&gt; pgrep -a sshd</code></small></span></label>
+    <label><input type="checkbox" id="c2"><span><b>PAM 없는 sshd에서 비밀번호 로그인이 켜져 있다</b><small>기본 <code>openssh-server</code>이거나 <code>openssh-server-pam</code>인데 <code>UsePAM no</code>, 그리고 <code>PasswordAuthentication yes</code>(OpenSSH 기본값)</small></span></label>
+    <label><input type="checkbox" id="c3"><span><b>비밀번호 칸이 <code>*</code>인 계정이 있다</b><small>root(<code>root:*</code>), 비밀번호 없이 만든 키 전용 사용자, tiny-cloud 이미지의 <code>alpine</code>, nslcd·winbind·sssd로 들어오는 디렉터리 사용자. <code>!</code>로 잠긴 계정은 해당 없음</small></span></label>
+    <label><input type="checkbox" id="c4"><span><b><code>$5$</code>/<code>$6$</code> 해시를 가진 계정이 하나라도 있다</b><small>누군가 콘솔 비밀번호를 정했거나, user-data로 해시 비밀번호 사용자를 추가한 경우</small></span></label>
+  </div>
+  <div class="result safe" id="condResult" aria-live="polite"></div>
+</div>
+
+<div class="tbl"><table>
+<thead><tr><th>상황</th><th>판정</th><th>할 일</th></tr></thead>
+<tbody>
+<tr><td>알파인 앱 컨테이너, 안에 sshd 없음</td><td>해당 없음</td><td>이미지는 평소 주기대로 갱신</td></tr>
+<tr><td>알파인 VM·서버, sshd 켜짐, 비밀번호 로그인 기본값</td><td>점검 필요</td><td>아래 5단계 바로 진행</td></tr>
+<tr><td>tiny-cloud 이미지(3.18.11~3.24.3)로 만든 인스턴스</td><td><code>$6$</code> 해시가 생기는 순간 위험</td><td>실행 중인 모든 인스턴스 업데이트 또는 비밀번호 로그인 끄기</td></tr>
+<tr><td>cloud-init으로 설정한 클라우드 이미지</td><td>해당 없음(공지 기준)</td><td>cloud-init이 <code>PasswordAuthentication no</code>를 씀</td></tr>
+<tr><td>데비안·우분투 등 glibc 배포판</td><td>이 버그와 무관</td><td>다른 OpenSSH 업데이트는 별도 확인</td></tr>
+</tbody></table></div>
+
+<h2 id="docker">3-2. 도커로 알파인을 쓴다면: 점검 포인트 6가지</h2>
+
+<div class="bubble">
+  <img src="assets/veloki-a.webp" width="72" height="75" alt="벨로키">
+  <div class="say"><span class="who">벨로키</span>요즘 도커 이미지는 거의 다 <code>-alpine</code>이잖아. 그럼 다 털리냐? 아니. 이번 버그의 열쇠는 <b>"그 컨테이너 안에서 sshd가 도느냐"</b>야.</div>
+</div>
+
+<p>실제로 제 맥북의 도커 이미지를 AI 에이전트가 읽기만 해서 훑어봤습니다(2026-11-06). 알파인 기반 이미지가 <b>17개</b>였고, 그중 <b>sshd가 들어 있는 이미지는 0개</b>였습니다. 이번 sshole에는 해당되지 않는다는 뜻입니다. 대신 베이스 버전이 <b>3.19부터 3.24까지 제각각</b>이었고, 정기 지원이 끝난 3.21 이하도 여럿이었습니다. 버그 하나보다 이쪽이 더 오래 남는 숙제였습니다.</p>
+
+<ol class="steps">
+<li><b>이미지 안에 sshd가 들어 있나</b> — 대부분의 앱 이미지는 없습니다. 있으면 이번 버그 점검 대상입니다.
+<pre><code>docker run --rm --entrypoint sh 이미지:태그 -c 'command -v sshd || echo "sshd 없음"'</code></pre></li>
+<li><b>실행 중인 컨테이너에서 sshd가 도나, 22번 포트가 열려 있나</b>
+<pre><code>docker ps --format '{{.Names}}  {{.Ports}}'
+docker exec 컨테이너이름 pgrep -a sshd</code></pre></li>
+<li><b>베이스 알파인 버전 확인</b> — 알파인 공지 기준으로 3.21.10, 3.22.8, 3.23.8, 3.24.4부터 고친 openssh가 들어 있습니다. 이보다 낮은데 sshd가 있으면 재빌드 대상입니다.
+<pre><code>docker run --rm --entrypoint cat 이미지:태그 /etc/alpine-release</code></pre></li>
+<li><b>고치는 방법은 "컨테이너 안 apk upgrade"가 아니라 재빌드·재생성</b> — 컨테이너 안에서 패키지를 올려도 컨테이너를 새로 만들면 원래 이미지로 돌아갑니다. 베이스를 새로 받아 다시 빌드하고 컨테이너를 다시 만드세요.
+<pre><code>docker build --pull -t 내이미지:태그 .
+docker compose build --pull &amp;&amp; docker compose up -d</code></pre></li>
+<li><b><code>FROM</code>을 digest(<code>@sha256:…</code>)로 고정했다면 digest도 갱신</b> — 고정해 둔 digest는 <code>--pull</code>을 해도 옛 이미지 그대로입니다.</li>
+<li><b>지원 끝난 베이스(3.21 이하)는 올려 두기</b> — 이번엔 알파인이 3.16까지 패치를 따로 냈지만, 지원 종료 브랜치는 보통 다음 보안 수정을 못 받습니다. <code>FROM alpine:3.24</code>처럼 지원 중인 브랜치로 옮겨 두면 다음 사고 때 재빌드 한 번으로 끝납니다.</li>
+</ol>
+
+<div class="card ok">
+<b>컨테이너에 SSH가 꼭 필요할까?</b>
+<p style="margin:6px 0 0">컨테이너 안을 들여다보는 용도라면 <code>docker exec -it 컨테이너이름 sh</code>로 충분합니다. 컨테이너에 sshd를 넣지 않으면 이번 같은 sshd 버그는 애초에 남의 일이 됩니다. SSH 접속이 정말 필요한 구조라면 키 로그인만 쓰고 <code>PasswordAuthentication no</code>를 이미지 설정에 넣어 두세요.</p>
+</div>
+
+<h2 id="s4">4. 5분 점검 순서</h2>
+
+<ol class="steps">
+<li><b>sshd가 도는지</b>
+<pre><code>pgrep -a sshd
+rc-service sshd status</code></pre></li>
+<li><b>실제 적용된 설정값</b> (PAM 없는 기본 빌드는 <code>usepam</code> 줄이 안 나올 수 있음. 그땐 <code>passwordauthentication</code>만 보면 됨)
+<pre><code>sshd -T | grep -i -E 'passwordauthentication|usepam|permitrootlogin'</code></pre></li>
+<li><b><code>*</code> 계정 찾기</b> (root 권한 필요. 디렉터리 서비스 사용자는 여기 안 나와도 해당으로 볼 것)
+<pre><code>awk -F: '$2=="*"{print $1}' /etc/shadow</code></pre></li>
+<li><b><code>$5$</code>/<code>$6$</code> 해시 개수</b> (root 권한 필요)
+<pre><code>grep -c -E '^[^:]+:\$[56]\$' /etc/shadow</code></pre></li>
+<li><b>업그레이드하고 꼭 재시작</b>, 그리고 버전 확인
+<pre><code>apk upgrade -U -a
+rc-service sshd restart
+apk info -v openssh-server</code></pre></li>
+</ol>
+
+<div class="tbl"><table>
+<thead><tr><th>알파인 브랜치</th><th>고정 openssh 버전</th></tr></thead>
+<tbody>
+<tr><td>edge</td><td>10.6_p2-r0</td></tr>
+<tr><td>3.24</td><td>10.3_p1-r2</td></tr>
+<tr><td>3.23</td><td>10.2_p1-r1</td></tr>
+<tr><td>3.22</td><td>10.0_p1-r11</td></tr>
+<tr><td>3.21</td><td>9.9_p2-r1</td></tr>
+<tr><td>3.20</td><td>9.7_p1-r6</td></tr>
+<tr><td>3.19</td><td>9.6_p1-r3</td></tr>
+<tr><td>3.18</td><td>9.3_p2-r4</td></tr>
+<tr><td>3.17</td><td>9.1_p1-r7</td></tr>
+<tr><td>3.16</td><td>9.0_p1-r6</td></tr>
+</tbody></table></div>
+<p class="note">3.21은 2026-11-01에 정기 지원이 끝났지만, 알파인은 3.16까지 고친 패키지를 따로 올려 두었습니다.</p>
+
+<div class="card warn">
+<b>당장 업데이트를 못 하면: 비밀번호 로그인 끄기</b>
+<p style="margin:6px 0">먼저 <b>키 로그인이 되는지 확인하고, 지금 붙어 있는 세션은 닫지 마세요.</b> 새 창에서 로그인이 되는 걸 본 뒤에 기존 세션을 닫습니다.</p>
+<pre><code>mkdir -p /etc/ssh/sshd_config.d
+echo 'PasswordAuthentication no' &gt; /etc/ssh/sshd_config.d/00-no-passwords.conf
+sshd -t &amp;&amp; rc-service sshd restart
+sshd -T | grep -i passwordauthentication   # passwordauthentication no 가 나와야 함</code></pre>
+<p class="note" style="margin:0">공지 기준으로 <code>sshd_config.d</code>는 3.19부터 읽습니다. 그보다 오래된 릴리스는 <code>/etc/ssh/sshd_config</code>의 해당 줄을 직접 <code>no</code>로 바꾸세요(공지에 sed 예시가 있습니다).</p>
+</div>
+
+<h2 id="s5">5. 업그레이드했는데 왜 아직 위험할 수 있나</h2>
+
+<figure class="illustration">
+  <img src="assets/running-process.webp" width="1200" height="800" alt="왼쪽 벨로키는 새 버전 설치 완료 상자를 들고 있고, 오른쪽 벨로키는 OLD 노트북 앞에서 난 아직 구버전인데라고 말한다. 아래에 실행 중인 프로세스까지 확인이라고 적혀 있다" loading="lazy">
+  <figcaption>패키지는 새것, 돌고 있는 sshd는 옛것. 이전 HTTP2Shell 글에서 쓴 장면을 그대로 다시 썼습니다. 이번에도 같은 함정입니다.</figcaption>
+</figure>
+
+<p><code>apk upgrade</code>는 디스크의 파일을 바꿀 뿐, <b>이미 메모리에서 돌고 있는 sshd를 바꾸지 않습니다.</b> 알파인 공지가 첫 문장부터 "업데이트하고 sshd를 재시작하라"고 강조하는 이유입니다. 재시작한 뒤에는 <code>sshd -T</code>로 실제 적용값을 한 번 더 보세요. 설정 파일에 적어 둔 값과 sshd가 실제로 읽은 값이 다를 수 있습니다.</p>
+
+<h2 id="s6">6. 흔적 확인, 그리고 어디까지 믿을까</h2>
+
+<div class="card">
+<b>침입 흔적 찾기 (알파인 공지 기준)</b>
+<ul style="margin:6px 0 0">
+<li><code>/var/log/messages</code>에서 비밀번호가 없어야 할 계정(alpine, root, 키 전용 사용자)의 <code>Accepted password</code> 줄</li>
+<li>doas 사용 기록, 최근 생긴 사용자·파일·<code>authorized_keys</code></li>
+<li>로그인을 배제할 수 없으면 그 기계는 침해된 것으로 보고 대응</li>
+</ul>
+<pre><code>grep 'Accepted password' /var/log/messages</code></pre>
+</div>
+
+<div class="tbl"><table>
+<thead><tr><th>구분</th><th>내용</th></tr></thead>
+<tbody>
+<tr><td>확인한 것</td><td>알파인 공식 공지(조건·고정 버전·조치), OpenSSH 10.6p2 릴리스 노트, CVE-2026-123158 레코드, musl·libxcrypt <code>crypt()</code> 반환값 재현</td></tr>
+<tr><td>하지 않은 것</td><td>실제 sshd 인증 우회 시도, 운영 서버 패치. 재현은 AI 에이전트가 맥북(aarch64) 한 환경에서 실행</td></tr>
+<tr><td>확인 못 한 것</td><td>SNS에 퍼진 "10년 동안 숨어 있던"이라는 표현의 근거, OpenWrt 등 알파인 밖 musl 배포판의 패치 현황</td></tr>
+<tr><td>CVE 표기</td><td>알파인 공지 작성 시점엔 CVE가 없었고, 같은 날 CVE 레코드가 공개됨. 기사마다 다르게 적힌 이유</td></tr>
+</tbody></table></div>
+
+<figure class="illustration">
+  <img src="assets/locked-gate.webp" width="1200" height="800" alt="벨로키가 정원 테이블에서 노트북으로 작업하고, 뒤로 자물쇠 걸린 철문과 열쇠, 체크리스트가 보인다" loading="lazy">
+  <figcaption>제 결론: 인터넷에 열린 서버는 열쇠(키 로그인)만 쓰고, 비밀번호 문은 처음부터 잠가 둔다.</figcaption>
+</figure>
+
+<div class="card ok">
+<b>제 생각</b>
+<p style="margin:6px 0 0">이번 버그에서 가져가는 교훈은 "실패를 문자열로 돌려주는 함수는 언젠가 정상 값과 부딪힌다"입니다. <code>*</code>는 musl에게는 에러였고 장부에게는 "비밀번호 없음"이었습니다. 각자 맞는 약속이 한 비교문에서 만나자 문이 열렸습니다.</p>
+<p style="margin:10px 0 0">클라우드 아키텍트로 일하는 입장에서, 인터넷에 열린 서버는 <b>키 로그인만 쓰고 <code>PasswordAuthentication no</code>를 이미지 기본값으로</b> 두는 게 맞다고 봅니다. 공지도 "둘 중 하나만 해도 구멍이 닫힌다"고 했습니다. OpenSSH가 AI로 찾은 버그 보고가 늘어 릴리스를 더 자주 하겠다고 밝힌 만큼, "재시작까지 포함한 갱신 주기"를 정해 두는 게 점점 중요해질 것 같습니다.</p>
+</div>
+
+<h3>공식 출처</h3>
+<ul class="src">
+<li><a href="https://alpinelinux.org/posts/2026-11-05-openssh-password-authentication-bypass/">Alpine Linux 보안 공지: openssh-server password authentication bypass (2026-11-05)</a></li>
+<li><a href="https://www.openssh.org/releasenotes.html#10.6p2">OpenSSH 10.6p2 릴리스 노트</a></li>
+<li><a href="https://www.cve.org/CVERecord?id=CVE-2026-123158">CVE-2026-123158 레코드</a></li>
+</ul>
+
+<h3>TECHTAEK 관련 글</h3>
+<ul class="src">
+<li><a href="https://techtaek.com/http2shell-brotli-nodejs-python-patch/">HTTP2Shell 취약점, PHP 고쳤는데 Node.js·Python도 확인해야 하는 이유</a></li>
+<li><a href="https://techtaek.com/nodejs-brotli-security-runtime-patch-2026/">Node.js 보안 취약점 해결방법, npm update로 끝나지 않는 이유</a></li>
+</ul>
+
+<footer>
+작성·확인 기준일 2026-11-06. crypt 재현은 AI 에이전트가 실행했고 실제 공격·운영 서버 패치는 하지 않았습니다. 버전과 조건은 알파인 공지 기준이며, 공지가 바뀌면 원문을 우선하세요. 이 페이지는 교육용 설명이며 보안 진단을 대신하지 않습니다.<br>
+벨로키 삽화는 TECHTAEK이 이전 글을 위해 만든 AI 생성 그림을 다시 쓴 것으로, 기술 근거와 구분됩니다. 글·삽화 CC BY-NC-ND 4.0 (외부 자료·출처 제외).
+</footer>
+
+</div>
+<script>
+(function(){
+  var data={
+    8:{m:"$6$saltsalt$udxCxRqRPfl8…",x:"$6$saltsalt$udxCxRqRPfl8…"},
+    256:{m:"$6$saltsalt$Ohn2i422X3EK…",x:"$6$saltsalt$Ohn2i422X3EK…"},
+    257:{m:"*",x:"$6$saltsalt$ehWjbY2n3hRk…"},
+    1024:{m:"*",x:"*0"}
+  };
+  var sim=document.getElementById('cryptSim');
+  function verdict(v){return v==="*"?['v-open','"*" 와 같음 → 로그인 통과']:['v-shut','"*" 와 다름 → 거절'];}
+  function show(len){
+    var d=data[len];
+    sim.querySelectorAll('button').forEach(function(b){b.setAttribute('aria-pressed',String(b.dataset.len==len));});
+    document.getElementById('outMusl').textContent=d.m;
+    document.getElementById('outXc').textContent=d.x;
+    [['vMusl',d.m],['vXc',d.x]].forEach(function(p){var r=verdict(p[1]);var el=document.getElementById(p[0]);el.className='verdict '+r[0];el.textContent=r[1];});
+  }
+  sim.querySelectorAll('button').forEach(function(b){b.addEventListener('click',function(){show(b.dataset.len);});});
+  show(257);
+
+  var ids=['c1','c2','c3','c4'],res=document.getElementById('condResult');
+  var names=['sshd 실행','PAM 없는 비밀번호 로그인','* 계정','$5$/$6$ 해시'];
+  function cond(){
+    var miss=[];ids.forEach(function(id,i){if(!document.getElementById(id).checked)miss.push(names[i]);});
+    if(miss.length===0){res.className='result danger';res.textContent='네 조건이 모두 맞습니다. 지금 업그레이드하고 sshd를 재시작하세요. 못 하면 비밀번호 로그인부터 끄세요.';}
+    else{res.className='result safe';res.textContent='아직 이 버그 조건이 다 맞지 않습니다(빠진 조건: '+miss.join(', ')+'). 그래도 업데이트는 해 두는 게 좋고, 체크하지 않은 칸이 정말 아닌지 명령으로 확인하세요.';}
+  }
+  ids.forEach(function(id){document.getElementById(id).addEventListener('change',cond);});
+  cond();
+})();
+</script>
+</body>
+</html>
